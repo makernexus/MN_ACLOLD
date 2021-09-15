@@ -3,12 +3,12 @@
 The idea here is to create a local cache of the EZFacility Data on an SQL server in the building.
 This cache should provide several advantages:
 +	Reduced query load against EZFacility = small cost savings (we get charged per API call)
-+	[BG comment:  is there a savings?  The cache will have to query every member every day or so.  We should analyse whther this query load is less than the query load of the RFID stations.  It is not obvious that this is true.]
++	[BG comment:  is there a savings?  The cache will have to query every member every day or so.  We should analyse whther this query load is less than the query load of the RFID stations.  It is not obvious that this is true.] [od: That's applicable to the Package database if we cache it. It's not entirely clear that's at all true of the Member database which is where I perceived the biggest savings.]
 +	Increased responsiveness to queries for Member data (goal is to answer all requests from readers in <250ms)
 +	Quick failover to transparent proxy if SQL server fails for any reaeson (sub 1s reversion if SQL doesn't answer)
 +	Nearly transparent to existing code (Host portion of URL code changes in order to point to in-house server)
 +	Possible additioanl automatic failover to direct API calls if local cache server fails to respond
-+	[BG comment:  this feature seems to be in conflict with the preious one - i.e. nearly transparent to exisitng code.]
++	[BG comment:  this feature seems to be in conflict with the preious one - i.e. nearly transparent to exisitng code.] [od: yes, this would require additional code effort in the core system, hence the "possible additional" nature.]
 
 ### Implementation stages and dependencies
 The implementation will be in stages and should be relatively straight forward...
@@ -67,7 +67,7 @@ Array [
 ```
 
 The following API calls will be used in the PoC:
-	[BG comment - general: the url endpoint will be the real ez facility system vs the sandbox that is listed herein].
+	[BG comment - general: the url endpoint will be the real ez facility system vs the sandbox that is listed herein]. [od: For implementation, yes. I was figuring PoC would be against sandbox].
 1.	POST https://api.sandbox.ezfacility.com/token
 	Authroization Basic using application credentials (see primary dev documents)
 	grant_type=password&username=<user>&password=<password>&scope=realm:tms
@@ -99,27 +99,28 @@ The following API calls will be used in the PoC:
 	about, the JSON parser shouldn't care about the missing fields). Since it's relatively cheap,
 	default decision unless argued otherwise will be store everything.
 	
-	[BG comment:  I strongly believe that the cache should only store what is needed for the RFID system to meet specs.  There is a significant privacy issue here.  The cache will need to be initialized via a query for all data from all members (at a location), but thereafter may be queried only for updates.  EZ Facility knows ablut the updates (apparently, from the description of this query) and therefore the cache does not need to figure out what is updated.  This query should return only member data where there has been some update (and we do need to verify this via testing) and the cache can filter out and persist only those fields that it needs to meet the requirements.]
+	[BG comment:  I strongly believe that the cache should only store what is needed for the RFID system to meet specs.  There is a significant privacy issue here.  The cache will need to be initialized via a query for all data from all members (at a location), but thereafter may be queried only for updates.  EZ Facility knows ablut the updates (apparently, from the description of this query) and therefore the cache does not need to figure out what is updated.  This query should return only member data where there has been some update (and we do need to verify this via testing) and the cache can filter out and persist only those fields that it needs to meet the requirements.] [od: EZF returns every member record (entirely) with a "Last Update" field which is >= the specified DateTime in the request. Are we really saying that we can't trust the security of our own MySQL server to hold private member data? That seems like something we should be able to (and should) fix.]
 
 	Open questions:
 		Do we need to deal gracefully with the situation where EZF changes the schema?  
-	[BG comment: why?  We onlt need to deal with EZ Facility changes to the API.  No?]
+	[BG comment: why?  We onlt need to deal with EZ Facility changes to the API.  No?] [od: That's my question, in a nutshell... If the JSON returned contains fields we aren't expecting or fields have been renamed or doesn't contain fields we are expecting, what is the expectation of how the software will behave in those circumstances? What is the likelihood of this happening? How much warning would be provided to whom before this happens in such a case? What steps do we need to take to ensure that warning results in the necessary software updates (if any) on a timely basis? etc.]
 		Does this need to be automated?
-	[BG comment:  if EZ Facility changes their API, we will have to change the cache code.  This could be a benefit of having the cache as the RFID station code would not necessarily be affected.  If EZ Facility changes its behavior vis-a-vis membership status or other key attributes, then we would need a deeper dive into the implications.]
+	[BG comment:  if EZ Facility changes their API, we will have to change the cache code.  This could be a benefit of having the cache as the RFID station code would not necessarily be affected.  If EZ Facility changes its behavior vis-a-vis membership status or other key attributes, then we would need a deeper dive into the implications.] [od: Sure... But what if, (absurd example) they change from a field named "First Name" to a field named "F_NAME" or changed the email address from an array to a single field or...]
 		Can we just ignore fields that in the EZF JSON that don't exist in our table?
 	[BG comment:  absolutely!  See above].
 		(Build the table manually then populate automatically from API or build table
 		from API data?)
-	[BG comment: the cache db should be populated with only the data that is needed based upon filtering the API query return json strings.  As I see it, EZ Facility would have to change functionality (not just the API or ven their internal schema) to impact what we are doing for the RFID system.]
+	[BG comment: the cache db should be populated with only the data that is needed based upon filtering the API query return json strings.  As I see it, EZ Facility would have to change functionality (not just the API or even their internal schema) to impact what we are doing for the RFID system.][od: So that's an argument for building manually and storing only a subset of the returned data. That's certainly one approach. I'm not yet convinced it is the best one.
 
-	The above call will be repeated for subsequent calls if there are any.
+	The above call will be repeated for subsequent pages if there are any.
 
-	When the database is rebuilt from scratched, the following will occur:
+	When the database is rebuilt from scratch, the following will occur:
 
 	A.	Scrub the database (drop table and create a new one)
 	B.	Pull in all pages using the API call with a dateTime for the earliest
 		modified record of the unix epoch (1970-01-01T00:00:00.000Z).
 	[BG comment:  why the earliest record?  There is am API query for members by location and an API query for membership data by member number and membership data by client ID.  These can be used to populate the cache with all relevant data on all members at the time when the cache DB is initialized.  Thereafter, we only need to query for updates since the last update.  Did I miss something in the API details?]
+	[od: Mainly convenience... It's not possible we ever had any members or database records whose last update is prior to 1970-01-01 and this allows the same basic code that does the cache updates to also do the initial cache load. Why write two completely different sets of code when one can do the trick?]
 	C.	Create and set the timestamp record. (See below).
 
 	Once allrecords have been loaded into the database, a cron job should periodically
@@ -134,8 +135,8 @@ The following API calls will be used in the PoC:
 	to our update request). Since we rarely have 33 updates in a day, let alone an hour, this shouldn't increase the page count and therefore
 	should not increase the number of API calls required to obtain the data.
 
-#### Stage 2: Build a cache server and APIs to answer queries from Checkin and FrontDoor boxes.
-	[BG comment:  there are additional RFID boxes that were deployed at the old facility.  Presumably, they will be deployed at the new place.  TBD how many boxes need to be supported.  The other boxes have member information queries and, additionally, member package queries.  Both sets of data will need to be in the cache database and will need to be kept up to date].
+#### Stage 2: Build a cache server and APIs to answer queries from various boxes.
+	[BG comment:  there are additional RFID boxes that were deployed at the old facility.  Presumably, they will be deployed at the new place.  TBD how many boxes need to be supported.  The other boxes have member information queries and, additionally, member package queries.  Both sets of data will need to be in the cache database and will need to be kept up to date]. [od: Certainly a possibility, though I think the cost of maintaining the package data vs. continuing to query EZF directly for that may exceed the gains of doing so. Frankly, if we're going to go to a system where we look up package data locally, I'd argue for a much more significant change where we hold the primary Package database and upload changes to EZF for consistency there. I think this process would be cheaper overall, incur less overhead in the form of excessive EZF queries and give us greater flexibility in how we manage package data going forward.]
 #### Stage 3: Build a test version of the software for the Checkin Boxes that uses the cache server API instead of EZF
 #### Stage 4: Implement Passthru when SQL problem detected
 #### Stage 5: Build a test version of the software for the checkin and other applicable boxes that tries the cache server first and fails through to the EZFacility API if a satisfactory response isn't received within 500ms.
@@ -149,11 +150,11 @@ involves some tradeoffs and might make the code more fragile. In general, if the
 it should be possible to modify the code and table manually before they are put into use. The code must be robust against
 schema changes in that it should continue to function and not generate SQL statements that can't be executed against
 the current database regradless of schema changes implemented by EZFacility.
-	[BG comment:  per my earlier comments, I do not see a need to automatically detect EZ Facility internal schema changes, and their API is independent of their schema.  I believe that the only EZ Facility changes that we would need to respond to are changes in their functionality, which are unlikely to not be backward compatible (for business reasons).  Likewise, EZ Facility API changes will have to be accomodated by the cache, but any such changes would likely be backward compatible.  So I wouldn't vote to be fancy and try to accomodate such changes automatically.  EZ Facility has a strong business interest in maintaining backward compatibility.  IMHO.]
+	[BG comment:  per my earlier comments, I do not see a need to automatically detect EZ Facility internal schema changes, and their API is independent of their schema.  I believe that the only EZ Facility changes that we would need to respond to are changes in their functionality, which are unlikely to not be backward compatible (for business reasons).  Likewise, EZ Facility API changes will have to be accomodated by the cache, but any such changes would likely be backward compatible.  So I wouldn't vote to be fancy and try to accomodate such changes automatically.  EZ Facility has a strong business interest in maintaining backward compatibility.  IMHO.] [Their API doesn't really document the exact JSON contents returned. It's pretty clear from looking at their stuff that they've got some SQL databases behind some fairly rudimentary JSON<->REST<->SQL interfaces and that if they modify their SQL Schema, it's very likely their JSON encoder would simply go with the flow automatically for lack of a better way to put it. There are some exceptions for array fields that clearly come from separate tables, but even those are trivial. As such, I have low confidence that the API is 100% stable with respect to the JSON generated as a result.]
 
 The initial SQL schema will be as follows:
 	
-	[BG comment:  I do dnot agree with caching all of this data.  Yes, we are forced to get it from EZ Facility, but we should only persist that information needed for the RFID system.  This is a member data privacy issue.  It is a benefit of the cache concept that the RFID stations NOT receive any more data than is necessary for access control and monitoring decision making.  All of the rest of the data that EZ Facility forces on us should be discarded before we cache it.  IMHO.]
+	[BG comment:  I do dnot agree with caching all of this data.  Yes, we are forced to get it from EZ Facility, but we should only persist that information needed for the RFID system.  This is a member data privacy issue.  It is a benefit of the cache concept that the RFID stations NOT receive any more data than is necessary for access control and monitoring decision making.  All of the rest of the data that EZ Facility forces on us should be discarded before we cache it.  IMHO.][od: My argument would be rather that we could limit what we send to the RFID stations from the cache, but there (should be) zero benefit to not storing it locally in the SQL database. One advantage to caching the full data is that we would still have it if something went horribly awry on the EZF side. I'm not saying I think that's likely, but I can't rule it out, either. Another advantage is that it could serve as the basis for other (readonly) uses of the data being decoupled from direct EZF dependencies.]
 
 ```
 TABLE: Members
@@ -238,26 +239,49 @@ The fields which will require custom attention from the parser are:
 JBS: I think there is a lot of sensitive personal information returned. If we store it then we have a responsibility to protect it while at-rest. I'd prefer to only store the fields we will need, or think we might need. No need for phone number, email, pronoun, address, etc. 
 	
 	BG:  I totally agree with JBS, above.
-
+[od: noted -- Though I would argue we should be protecting the data at rest in the SQL server in question already given what it contains, so I don't really see a difference in the obligation whether we cache those fields or not]
+	
 JBS: The cache is updated periodically. If the data changes between updates it will be old. I'm not too concerned about granting access to someone who does not qualify, but I would hate to deny a valid, current member. The vast majority of client info transactions will result in a correct, positive access to the resource. One strategy is to go back to the CRM for current information if the result is to deny access. Of course the cache does not know what the end device is evaluating so it does not know if the result was to deny. I suggest adding an API to the cache that can be called from an end device to say "I just denied access based on client info". The cache would then go back to the CRM system to get current data on that clientID. The next time the cache is queried it will return the latest information; this would happen in less than a second. The user experience would be "I just got my membership today but check-in has denied me! Oh, I just tried again and it worked!" After that it will always work. 
 	
 	BG:  I think that JBS is over-complicating this issue.  The planned update period is every hour.  I have suggested that we need to perform an analysis of the liekly update query load; perhaps the updates can be even more frequent.  We could also have a simple process to manually command an immdeidate cache update; e.g. after a new member is added or after a BOSS class adds new packages for the participant members. But let's say that we don't get fancy and just update the cache hourly.  This means that new mamgers or new packages will fail for up to only one hour.  So perhaps it is OK for members or admins to manually deal with this limites situation; e.g. via manaul sign-in sheet.  It is, afterall, only for at most one hour after a change.
+	[od: Does anyone know what the query limit before we start getting charged is? Do we know what the charge for additional queries is? It's very hard to evaluate any of these questions without that data. Further, nobody is likely to be trying to badge back in less than an hour after interacting with a staff member. Regarding the package portion, this furthers my contention that making EZF the copy of package data and making the MySQL database the "source of truth" for that data makes more sense than the other way around if we are going to query package data locally.]
 
 JBS: We do get charged by EZF for each API call to the CRM. If the call to get recent changes requires 10 "get next page" API calls, that might count as 10 API events. Not sure this is a problem, we just need to make sure.
 	
 	BG: I concur.  We need to analyse the query load to make sure that whatever we do reduces and not increases it.
+	OD: This goes against what BG has said elsewhere that our $10/month covers more queries than we currently use. There are not currently 10 "get next page" calls in a full refresh of the database, only 4 as noted previously. There are <500 records in the database. The number of API calls for a full refresh goes up by 1 call per 100 records in the database.
 
 JBS: We'll need to address how this system is backed up - if at all. Maybe no need for that.
 	
 	BG: As a cache, I don't think that it needs its database backed up.  What needs backup is when the cache computer fails.  It is implied that only a url change (presumably, to a hot backup server) is needed ("minimal changes to the existing code").  If the RFID stations need to failover to querying EZ Facilty directly, then this is a lot more than a "minimal change to existing code".
+	OD: There are two layers of failure to contend with here. One is the failure of the SQL server backing the cache server. In that case, the cache server should fall through to querying EZF directly. The other is the failure of a cache server itself. IMHO, there are multiple possibilities for addressing this:
+		*	Add code to the badge stations to fall through to EZF direct queries in the event of cache non-response
+			+	Possibly the most robust solution
+			+	Probably best user response
+			-	Much more difficult to code
+			-	Code has to be maintained/updated on every badge system
+			-	Potential for complex failure scenarios not easily identified ahead of time
+		*	Have two cache servers running on a load-balanced VIP or in a PASSIVE/ACTIVE fratricide-based failover.
+			+	This is well known and well trod technology in a variety of solutions from Apache and/or NGINX
+			+	The failure scenarios of these solutions are well known and widely understood
+			+	These mechanisms are well maintained and widely deployed in much more critical infrastructure at much larger scales
+			+	R.Pis would be entirely adequate to the task and are Cheap.
+		*	Use an expensive HA system to run the cache
+			-	Cost
+			-	High overhead and still subject to software failures
+			-	Power hungry (~400W idle)
+			
+	On the Package data side of things, I think that EZF would, essentially, become the backup (assuming we follow my suggestion to make the MySQL databaase authoritative for Package data and push to EZF from there). We would need to have code that could restore the Package database from EZF data in this case, but that should be relatively trivial.
 	
 JBS: Is there some security on the cache system? Maybe have the front end locked to the public IP of MN?
 	
 	BG: there is a lot of personal information hitting the cache from EZ Facility.  As such, I believe that there needs to be a requirement for both physical and network security of the cache (live and hot backup, both).
+	OD: Agreed... I'm not sure how tying anything to the public IP of MN helps with that situation. IP Based Access Controls are not effective security. I would rather suggest that the API should not be capable of returning data outside of that we wish to provide to the badging stations and that the badging stations should have to include an authorized secret in the query (Ideally, one which is unique to the station). The easiest way to implement this would be to pass the provided credentials through as SQL authentication when the cache server goes to retrieve a record, but that would slightly increase overhead. Probably not beyond acceptable, but it would change cache querys from WEB->SQL SELECT->SQL RESPONSE->JSON to WEB->SQL AUTH REQUEST->SQL AUTH RESULT->SQL SELECT->SQL RESPONSE->JSON. This would mean either maintaining a session with the SQL server for each active station or doing a setup/teardown of the SQL session for each transaction. There are, of course, other alternatives that require more development effort, but less overhead, including CHAP-like request authentications and/or Kerberos tickets and the like. The SQL Server should be most secure. IMHO, the cache update should run directly on the same server as the database, but I'm open to arguments on that. The cache update should run on a system with a security profile equivalent to the SQL server. The Cache API servers only need to meet the same security model as the badge readers today and wouldn't necessarily (probably shouldn't) have access to everything in the SQL database.
 
 JBS: I wonder if we should discuss coding styles? What is the anticipated language of implementation? We use .PHP for a lot today, will that work? Is there an admin interface to this? If so, a separation of style, layout, and code into different files? Do we put business logic into stored procedures when possible? Maybe a lot of other questions I haven't thought of.
 	
 	BG:  I agree with JBS.  However, I think that we postpone such discussion until it is determined that the project is a go and the functional and performance requirements are finalized.  Then, we need a top level design session that flushes out these issues.  While I say this, I am reminded that we need to add a top level requirement about system maintenance.  Who will be maintaining the cache needs to be considered in the design to meet this requirement, as maintainers skill sets will need to match the implementation.
+	OD: I'm a little confused here. No UI is proposed. It's all API and M2M communication, so I don't know how "layout" would apply. This is intended to be a simple cache, so there really shouldn't be any business logic involved in this. Since we want this to be relatively secure, PHP would be one of my last choices, and I'd probably have to begrudgingly say Python is probably the best alternative, though if it were my own project, I'd likely do it in PERL or C.
 	
 	BG OVERALL COMMENT:  IMHO, the value of the cache is NOT in improving RFID performnce.  Our testing to date suggests that we can fix the performance issue with the current (cache-less) system (and we should do this in any event).  There are, however, significant POSSIBLE benefits of the cache:
 	(1) Reduction of query load to EZ Facility
@@ -266,4 +290,5 @@ JBS: I wonder if we should discuss coding styles? What is the anticipated langua
 	(4) Reduction of vulnerability of the RFID system to accidental disclosure of members' personal information.  Most such information from EZ Facility should be filtered out before any caching; only relevant data will be persisted and available to RFID stations.  Communication with EZ Facility (involving a host of personal data) is limted to the cache, which can be physically and logically isolated whereby access is only available to a small number of trusted admins (the ones who work directly with EZ Facility anyway).
 	(5) A cache with a limited and simple API for the RFID Stations would allow us to easily remove the JSON library from the station firmware that seems to be the source of a number of issues (not just performance -- sometimes returning old or incorrect data).  The RFID Station to Cache API could return "simple JSON" or CSV (one level hierarchy -- easy for the firmware to parse without needing a library).  This has the potential to kill a bunch of difficult-to-reproduce bugs all at once while increasing station performance and predictability.
 	
+	OD: Agreed with the base statement and the benefits. (5) would, however, be a much more involved cache implementatoin than initially envisioned.
 	
