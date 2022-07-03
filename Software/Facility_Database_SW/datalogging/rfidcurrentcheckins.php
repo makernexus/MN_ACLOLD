@@ -83,7 +83,7 @@ if (mysqli_num_rows($result) > 0) {
             if ($firstIteration) {
                 //
                 $firstIteration = false;
-            } else {
+            } else if ($currentClientID != $MODResult["clientID"]) {
                 // create div for previous clientID
                 $thisDiv = makeDiv($currentDisplayClasses, $currentFirstName, $currentClientID, $currentEquipment, $photoServer  ) . "\r\n";
             
@@ -105,8 +105,10 @@ if (mysqli_num_rows($result) > 0) {
 
     }
     // last element from loop
-    $thisDiv = makeDiv($currentDisplayClasses, $currentFirstName , $currentClientID, $currentEquipment, $photoServer ) . "\r\n";
-    $photodivs = $photodivs . $thisDiv;
+    if ($currentClientID != $MODResult["clientID"]) {
+        $thisDiv = makeDiv($currentDisplayClasses, $currentFirstName , $currentClientID, $currentEquipment, $photoServer ) . "\r\n";
+        $photodivs = $photodivs . $thisDiv;
+    }
 }
 
 $html = str_replace("<<PHOTODIVS>>",$photodivs, $html);
