@@ -1,6 +1,6 @@
 <?php
 
-// Show photos of most recent 100 members
+// Show list of anyone who is either Staff designated or MOD Eligible
 //
 // Creative Commons: Attribution/Share Alike/Non Commercial (cc) 2022 Maker Nexus
 // By Jim Schrempp
@@ -13,8 +13,9 @@ $today = new DateTime();
 $today->setTimeZone(new DateTimeZone("America/Los_Angeles")); 
 
 // get the HTML skeleton
-$myfile = fopen("rfidlast100membershtml.txt", "r") or die("Unable to open file!");
-$html = fread($myfile,filesize("rfidlast100membershtml.txt"));
+$htmlFileName = "rfidreportstaffmodhtml.txt";
+$myfile = fopen($htmlFileName, "r") or die("Unable to open file!");
+$html = fread($myfile,filesize($htmlFileName));
 fclose($myfile);
 
 // Get the config info
@@ -33,27 +34,30 @@ if (mysqli_connect_errno()) {
 }
 
 $selectSQL = 
-    "SELECT firstName, lastName, clientID, dateLastSeen, displayClasses, MOD_Eligible
+    "SELECT firstName, lastName, clientID, displayClasses, MOD_Eligible
      FROM clientInfo
-     ORDER BY dateLastSeen DESC
-     LIMIT 200";
+     WHERE displayClasses like '%staff%' OR MOD_Eligible = 1
+     ORDER BY lastName ASC";
     
 $result = mysqli_query($con, $selectSQL);
 echo mysqli_error($con);
 
 // Construct the page
 
+$resultTable = "<table>";
+
 if (mysqli_num_rows($result) > 0) {
 	
     while($row = mysqli_fetch_assoc($result)) {
 
-        $thisDiv = makeDiv($row["firstName"], $row["lastName"], $row["clientID"], $row["dateLastSeen"], $photoServer, $row["displayClasses"], $row["MOD_Eligible"]  ) . "\r\n";
+        $thisRow = makeRow($row["firstName"], $row["lastName"], $row["displayClasses"], $row["MOD_Eligible"]  ) . "\r\n";
             
-        $photodivs = $photodivs . $thisDiv;
+        $resultTable = $resultTable . $thisRow;
     }
 }
+$resultTable = $resultTable . "</table>";
 
-$html = str_replace("<<PHOTODIVS>>",$photodivs, $html);
+$html = str_replace("<<RESULTTABLE>>",$resultTable, $html);
 echo $html;
 
 mysqli_close($con);
@@ -63,13 +67,19 @@ return;
 // ------------------------------------------------------------
 
 
-function makeDiv($firstName, $lastName, $clientID, $dateLastSeen, $photoServer, $classes, $MODeligible) {
-    $MODclass = "";
+function makeRow($firstName, $lastName, $classes, $MODeligible) {
+    $MOD = "";
     if ($MODeligible == 1) {
-        $MODclass = "MOD";
+        $MOD = "MOD";
     }
-    return "<div class='photodiv " . $classes . " " . $MODclass . "' >" . makeTable($firstName, $lastName, $clientID, $dateLastSeen, $photoServer, $displayClasses, $MODeligible) . "</div>";
+    $STAFF = "";
+    if (strpos(" ".$classes,"staff") != 0) {
+        $STAFF = "Staff";
+    }
+
+    return "<tr><td>" . $lastName . ", " . $firstName . "</td><td>" . $STAFF . "</td><td>" . $MOD . "</td></tr>" ;
 }
+
 function makeTable($firstName, $lastName, $clientID, $dateLastSeen, $photoServer, $MODeligible){
   return "<table class='clientTable'><tr><td class='clientImageTD'>" . makeImageURL($clientID, $photoServer) . 
   "</td></tr><tr><td class='clientNameTD'>" . $lastName . ", " . $firstName . 
